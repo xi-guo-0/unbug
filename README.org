@@ -1,0 +1,81 @@
+#+TITLE: unbug – Crash-Intercepting Backtrace Library
+#+DESCRIPTION: A preloadable shared library that captures and prints demangled C++ stack traces on crashes, supporting Android, Linux, and QNX.
+#+OPTIONS: ':nil
+
+* Overview
+*unbug* is a lightweight shared library designed to assist developers in debugging C/C++ applications across multiple platforms. By preloading this library, it installs signal and terminate handlers that capture and print demangled stack traces when a process encounters a fatal error.
+
+* Motivation
+Developing C/C++ applications across platforms like Android, Linux, and QNX often presents challenges, especially when dealing with core dumps. On QNX systems, discrepancies between the shared libraries on the development board and the SDK can hinder effective backtrace analysis using GDB. *unbug* addresses this issue by providing immediate, in-process stack traces without relying on external debugging tools.
+
+* Features
+- Installs handlers for signals: *SIGSEGV*, *SIGABRT*, *SIGFPE*, *SIGILL*, *SIGBUS*, and *SIGTERM*.
+- Captures uncaught C++ exceptions via *std::terminate*.
+- Utilizes *libunwind* for reliable stack unwinding.
+- Demangles C++ symbol names using *abi::__cxa_demangle*.
+- Outputs stack traces directly to *stderr* using safe, low-level write operations.
+- Supports Android, Linux, and QNX operating systems.
+
+* Requirements
+- C++11-compatible compiler.
+- CMake version 3.21 or higher.
+- *libunwind* (automatically fetched and built via CMake).
+- For QNX: QNX Software Development Platform (SDP) with appropriate cross-compilation tools.
+
+* Supported Platforms
+- *Linux*
+- *Android*
+- *QNX*
+
+* Building the Project
+#+begin_src shell :noeval
+cmake -S . -B build
+cmake --build build
+#+end_src
+
+- For cross-compilation (e.g., QNX or Android), specify the appropriate toolchain file:
+
+  #+begin_src shell :noeval
+cmake -DCMAKE_TOOLCHAIN_FILE=path/to/toolchain.cmake -S . -B build
+cmake ..
+  #+end_src
+
+* Usage
+Preload the *unbug* library when running your application to enable stack trace capturing:
+
+#+BEGIN_SRC shell
+LD_PRELOAD=./build/libunbug.so ./build/test
+#+END_SRC
+
+Upon encountering a crash (e.g., segmentation fault), the application will output a stack trace similar to:
+
+#+BEGIN_EXAMPLE
+Stack trace handler installed
+
+Caught signal: 11
+Call stack:
+0x00007efff98ca967: (anonymous namespace)::print_demangled_stacktrace() + 0x0x0000000000000028
+0x00007efff98caaf9: signal_handler(int) + 0x0x000000000000006b
+0x00007efff96c7520:  + 0x0x000000000000006b
+0x000055ab0acce13d: main + 0x0x0000000000000014
+0x00007efff96aed90: __libc_start_call_main + 0x0x0000000000000080
+0x00007efff96aee40: __libc_start_main_alias_2 + 0x0x0000000000000080
+0x000055ab0acce065: _start + 0x0x0000000000000025
+#+END_EXAMPLE
+
+This immediate feedback aids in pinpointing the source of errors without relying on external debugging tools.
+
+* Example
+Here's a simple example demonstrating how *unbug* captures a segmentation fault:
+
+#+BEGIN_SRC cpp
+#include <cstdlib>
+
+int main() {
+  int *p = nullptr;
+  *p = 42; // Trigger SIGSEGV
+  return 0;
+}
+#+END_SRC
+
+Compile and run the program with *unbug* preloaded to observe the stack trace output.
