@@ -10,15 +10,18 @@
 #include <unistd.h>
 #include <vector>
 
-extern "C" void _Unwind_Resume(struct _Unwind_Exception *) __attribute__((weak));
+#ifdef UNBUG_ENABLE_DWARF
+#include <elfutils/libdwfl.h>
+#endif
+
+extern "C" void _Unwind_Resume(struct _Unwind_Exception *)
+    __attribute__((weak));
 
 static struct sigaction original_actions[NSIG];
 static std::terminate_handler original_terminate_handler = nullptr;
 
 namespace {
-void safe_write(const char *msg) {
-  write(STDERR_FILENO, msg, strlen(msg));
-}
+void safe_write(const char *msg) { write(STDERR_FILENO, msg, strlen(msg)); }
 
 void safe_print_num(int num) {
   char buffer[16];
@@ -61,11 +64,66 @@ void safe_print_hex(uintptr_t value) {
   write(STDERR_FILENO, buffer, 16);
 }
 
+#ifdef UNBUG_ENABLE_DWARF
+Dwfl *setup_dwfl() {
+  static Dwfl *dwfl_context = nullptr;
+  static bool attempted = false;
+
+  if (attempted)
+    return dwfl_context;
+
+  attempted = true;
+
+  static Dwfl_Callbacks callbacks = {};
+  callbacks.find_elf = dwfl_linux_proc_find_elf;
+  callbacks.find_debuginfo = dwfl_standard_find_debuginfo;
+  callbacks.section_address = dwfl_offline_section_address;
+
+  Dwfl *dwfl = dwfl_begin(&callbacks);
+  if (!dwfl)
+    return nullptr;
+
+  if (dwfl_linux_proc_report(dwfl, getpid()) != 0 ||
+      dwfl_report_end(dwfl, nullptr, nullptr) != 0) {
+    dwfl_end(dwfl);
+    return nullptr;
+  }
+
+  dwfl_context = dwfl;
+  return dwfl_context;
+}
+
+const char *lookup_source(uintptr_t pc, int &line) {
+  line = 0;
+  Dwfl *dwfl = setup_dwfl();
+  if (!dwfl)
+    return nullptr;
+
+  if (pc == 0)
+    return nullptr;
+
+  uintptr_t adjusted_pc = pc - 1;
+
+  Dwfl_Module *module = dwfl_addrmodule(dwfl, adjusted_pc);
+  if (!module)
+    return nullptr;
+
+  Dwfl_Line *dwfl_line = dwfl_module_getsrc(module, adjusted_pc);
+  if (!dwfl_line)
+    return nullptr;
+
+  Dwarf_Addr addr = 0;
+  const char *filename =
+      dwfl_lineinfo(dwfl_line, &addr, &line, nullptr, nullptr, nullptr);
+  return filename;
+}
+#endif
+
 class DemangleBuffer {
   static const size_t BUFFER_SIZE = 1024;
   char buffer[BUFFER_SIZE];
 
- public:
+public:
   const char *demangle(const char *name) {
     if (!name)
       return "<null>";
@@ -86,6 +144,10 @@ struct StackFrame {
   uintptr_t pc;
   uintptr_t offset;
   char sym[256];
+#ifdef UNBUG_ENABLE_DWARF
+  const char *file;
+  int line;
+#endif
 };
 
 std::vector<StackFrame> collect_stacktrace() {
@@ -103,6 +165,11 @@ std::vector<StackFrame> collect_stacktrace() {
       break;
 
     unw_get_proc_name(&cursor, frame.sym, sizeof(frame.sym), &frame.offset);
+#ifdef UNBUG_ENABLE_DWARF
+    frame.file = nullptr;
+    frame.line = 0;
+    frame.file = lookup_source(frame.pc, frame.line);
+#endif
     frames.push_back(frame);
   }
 
@@ -120,6 +187,15 @@ void print_demangled_stacktrace() {
     safe_write(demangler.demangle(frame.sym));
     safe_write(" + 0x");
     safe_print_hex(frame.offset);
+#ifdef UNBUG_ENABLE_DWARF
+    if (frame.file) {
+      safe_write(" (");
+      safe_write(frame.file);
+      safe_write(":");
+      safe_print_num(frame.line);
+      safe_write(")");
+    }
+#endif
     safe_write("\n");
   }
 }
@@ -174,4 +250,7 @@ __attribute__((constructor)) void init() {
 
   original_terminate_handler = std::set_terminate(terminate_handler);
   safe_write("Stack trace handler installed\n");
+#ifdef UNBUG_ENABLE_DWARF
+  setup_dwfl();
+#endif
 }

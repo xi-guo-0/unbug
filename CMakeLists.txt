@@ -11,6 +11,19 @@ include(ExternalProject)
 
 set(LIBUNWIND_INSTALL_DIR ${CMAKE_BINARY_DIR}/libunwind-install)
 
+set(UNBUG_DWARF_SUPPORTED OFF)
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_SYSTEM_PROCESSOR STREQUAL "x86_64")
+  set(UNBUG_DWARF_SUPPORTED ON)
+endif()
+
+option(UNBUG_ENABLE_DWARF "Enable DWARF-backed source information in stack traces" OFF)
+
+if(UNBUG_ENABLE_DWARF AND NOT UNBUG_DWARF_SUPPORTED)
+  message(WARNING
+    "UNBUG_ENABLE_DWARF is only supported on x86_64 Linux; disabling option")
+  set(UNBUG_ENABLE_DWARF OFF)
+endif()
+
 if(CMAKE_CROSSCOMPILING)
   if(QNXNTO)
     set(CROSS_COMPILE_PREFIX "${CMAKE_SYSTEM_PROCESSOR}-unknown-nto-qnx7.1.0")
@@ -33,7 +46,7 @@ if(CMAKE_CROSSCOMPILING)
     else()
       message(
         FATAL_ERROR
-          "Unsupported host system for Android NDK: ${CMAKE_HOST_SYSTEM_NAME}")
+        "Unsupported host system for Android NDK: ${CMAKE_HOST_SYSTEM_NAME}")
     endif()
 
     if(ANDROID_ABI STREQUAL "arm64-v8a")
@@ -50,10 +63,10 @@ if(CMAKE_CROSSCOMPILING)
 
     string(REGEX REPLACE "android-" "" ANDROID_API_LEVEL "${ANDROID_PLATFORM}")
     set(ANDROID_CC
-        "${ANDROID_NDK}/toolchains/llvm/prebuilt/${NDK_HOST_TAG}/bin/${LIBUNWIND_HOST}${ANDROID_API_LEVEL}-clang"
+      "${ANDROID_NDK}/toolchains/llvm/prebuilt/${NDK_HOST_TAG}/bin/${LIBUNWIND_HOST}${ANDROID_API_LEVEL}-clang"
     )
     set(ANDROID_CXX
-        "${ANDROID_NDK}/toolchains/llvm/prebuilt/${NDK_HOST_TAG}/bin/${LIBUNWIND_HOST}${ANDROID_API_LEVEL}-clang++"
+      "${ANDROID_NDK}/toolchains/llvm/prebuilt/${NDK_HOST_TAG}/bin/${LIBUNWIND_HOST}${ANDROID_API_LEVEL}-clang++"
     )
     set(ANDROID_CFLAGS "-fPIC -D__ANDROID_API__=${ANDROID_API_LEVEL}")
     set(ANDROID_CXXFLAGS "${ANDROID_CFLAGS}")
@@ -72,7 +85,7 @@ else()
 endif()
 
 set(LIBUNWIND_URL
-    "https://github.com/libunwind/libunwind/archive/refs/tags/${LIBUNWIND_VERSION}.zip"
+  "https://github.com/libunwind/libunwind/archive/refs/tags/${LIBUNWIND_VERSION}.zip"
 )
 
 ExternalProject_Add(
@@ -81,10 +94,10 @@ ExternalProject_Add(
   PREFIX ${CMAKE_BINARY_DIR}/libunwind
   INSTALL_DIR ${LIBUNWIND_INSTALL_DIR}
   CONFIGURE_COMMAND
-    cd <SOURCE_DIR> && autoreconf -fiv && ./configure --prefix=<INSTALL_DIR>
-    --disable-shared --enable-static --disable-tests --disable-coredump
-    --disable-minidebuginfo ${CROSS_COMPILE_FLAGS} CC=${CROSS_COMPILE_CC}
-    CXX=${CROSS_COMPILE_CXX} CFLAGS=-fPIC CXXFLAGS=-fPIC
+  cd <SOURCE_DIR> && autoreconf -fiv && ./configure --prefix=<INSTALL_DIR>
+  --disable-shared --enable-static --disable-tests --disable-coredump
+  --disable-minidebuginfo ${CROSS_COMPILE_FLAGS} CC=${CROSS_COMPILE_CC}
+  CXX=${CROSS_COMPILE_CXX} CFLAGS=-fPIC CXXFLAGS=-fPIC
   BUILD_IN_SOURCE 1
   BUILD_COMMAND make
   INSTALL_COMMAND make install)
@@ -92,17 +105,25 @@ ExternalProject_Add(
 add_library(${CMAKE_PROJECT_NAME} SHARED ${CMAKE_PROJECT_NAME}.cpp)
 
 target_include_directories(${CMAKE_PROJECT_NAME}
-                           PRIVATE ${LIBUNWIND_INSTALL_DIR}/include)
+  PRIVATE ${LIBUNWIND_INSTALL_DIR}/include)
 target_link_directories(${CMAKE_PROJECT_NAME} PRIVATE
-                        ${LIBUNWIND_INSTALL_DIR}/lib)
+  ${LIBUNWIND_INSTALL_DIR}/lib)
+
+if(UNBUG_ENABLE_DWARF)
+  target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE UNBUG_ENABLE_DWARF)
+endif()
 
 if(CMAKE_SYSTEM_PROCESSOR STREQUAL "x86_64")
   target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE unwind unwind-x86_64)
 elseif(QNXNTO)
   target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE unwind unwind-aarch64
-                                                      lzma)
+    lzma)
 elseif(ANDROID)
   target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE unwind unwind-aarch64 z)
+endif()
+
+if(UNBUG_ENABLE_DWARF)
+  target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE dw elf)
 endif()
 
 add_dependencies(${CMAKE_PROJECT_NAME} libunwind)

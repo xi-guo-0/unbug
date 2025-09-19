@@ -33,6 +33,16 @@ cmake -S . -B build
 cmake --build build
 #+end_src
 
+- Optional DWARF-backed source locations (x86_64 Linux only):
+
+  #+begin_src shell :noeval
+cmake -DUNBUG_ENABLE_DWARF=ON -S . -B build
+cmake --build build
+  #+end_src
+
+  Requires system-provided `libdw` and `libelf`, and binaries built with
+  debugging information (`-g`). On other platforms leave the option disabled.
+
 - For cross-compilation (e.g., QNX or Android), specify the appropriate toolchain file:
 
   #+begin_src shell :noeval
